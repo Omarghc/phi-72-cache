@@ -197,6 +197,7 @@ def obtener_resultados_de_hoy(api_url):
 # ========================
 if __name__ == "__main__":
     api_url = "https://omarghc.github.io/sync-phi72/resultados_combinados.json"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     plantilla = "plantilla_bancard.png"
 
     resultados = obtener_resultados_de_hoy(api_url)
@@ -237,3 +238,4 @@ if __name__ == "__main__":
                 print("📣 Publicado en IG:", permalink)
             except Exception as e:
                 print("❌ Error publicando en IG:", e)
+
