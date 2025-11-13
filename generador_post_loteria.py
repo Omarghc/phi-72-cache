@@ -154,7 +154,7 @@ def generar_publicacion(nombre_loteria, numeros, hora, plantilla_path, salida_pa
     img = Image.open(plantilla_path).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
-    font_path = "C:/Windows/Fonts/arialbd.ttf"
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     font_numeros = ImageFont.truetype(font_path, 160)
     font_hora = ImageFont.truetype(font_path, 70)
 
@@ -238,4 +238,5 @@ if __name__ == "__main__":
                 print("📣 Publicado en IG:", permalink)
             except Exception as e:
                 print("❌ Error publicando en IG:", e)
+
 
