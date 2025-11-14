@@ -21,3 +21,16 @@ jobs:
 
       - name: Ejecutar script
         run: python generador_post_loteria.py
+
+      - name: Configurar Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Hacer commit de imágenes generadas
+        run: |
+          git add post_*.png
+          git diff --cached --quiet || git commit -m "🖼️ Publicaciones automáticas generadas"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
