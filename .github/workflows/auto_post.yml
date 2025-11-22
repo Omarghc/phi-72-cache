@@ -5,13 +5,18 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write  # necesario para poder hacer git push
+
 jobs:
   generar-imagenes:
     runs-on: ubuntu-latest
 
     steps:
       - name: Clonar repositorio
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # para poder hacer commit/push sin líos
 
       - name: Instalar dependencias
         run: |
@@ -29,8 +34,19 @@ jobs:
 
       - name: Hacer commit de imágenes generadas
         run: |
-          git add post_*.png
-          git diff --cached --quiet || git commit -m "🖼️ Publicaciones automáticas generadas"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Si no hay archivos que coincidan con post_*.png, no hacemos nada
+          if ls post_*.png 1> /dev/null 2>&1; then
+            echo "🖼️ Se encontraron imágenes generadas, preparando commit..."
+            git add post_*.png
+
+            # Solo hacer commit si realmente hay cambios staged
+            if ! git diff --cached --quiet; then
+              git commit -m "🖼️ Publicaciones automáticas generadas [skip ci]"
+              git push
+              echo "✅ Imágenes commiteadas y pusheadas."
+            else
+              echo "ℹ️ No hay cambios nuevos en las imágenes. No se hace commit."
+            fi
+          else
+            echo "ℹ️ No se generaron imágenes (post_*.png), nada que commitear."
+          fi
