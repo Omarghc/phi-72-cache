@@ -12,6 +12,11 @@ jobs:
   generar-imagenes:
     runs-on: ubuntu-latest
 
+    # 👇 aquí inyectamos los tokens al entorno del job (y por tanto al script)
+    env:
+      IG_USER_ID: ${{ secrets.IG_USER_ID }}
+      IG_TOKEN: ${{ secrets.IG_TOKEN }}
+
     steps:
       - name: Clonar repositorio
         uses: actions/checkout@v4
@@ -24,7 +29,7 @@ jobs:
           sudo apt-get install -y libfreetype6-dev libjpeg-dev zlib1g-dev
           pip install requests pillow
 
-      - name: Ejecutar script
+      - name: Ejecutar script (genera imágenes + publica en IG)
         run: python generador_post_loteria.py
 
       - name: Configurar Git
@@ -50,3 +55,5 @@ jobs:
           else
             echo "ℹ️ No se generaron imágenes (post_*.png), nada que commitear."
           fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
