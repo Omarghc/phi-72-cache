@@ -18,7 +18,6 @@ LOTERIAS_A_PUBLICAR = [
     "Loteka Noche", "Mega Chances", "El Quinielón Día", "El Quinielón Noche",
 ]
 
-# IG
 GRAPH = "https://graph.facebook.com/v24.0"
 IG_USER_ID = os.getenv("IG_USER_ID")
 IG_TOKEN = os.getenv("IG_TOKEN")
@@ -77,6 +76,38 @@ def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] 
     return info.get("permalink", "")
 
 # ========================
+# FECHA INTELIGENTE
+# ========================
+def fecha_es_hoy(fecha_str: str) -> bool:
+    """
+    Detecta si una fecha en formato variable corresponde a HOY.
+    Soporta formatos usados por tu API.
+    """
+    if not fecha_str:
+        return False
+
+    hoy = datetime.now().date()
+
+    formatos = [
+        "%Y-%m-%d",
+        "%d-%m-%Y",
+        "%d-%m-%Y %H:%M",
+        "%d/%m/%Y",
+        "%d %B",        # "23 noviembre"
+        "%d %b",        # "23 nov"
+    ]
+
+    for fmt in formatos:
+        try:
+            f = datetime.strptime(fecha_str, fmt).date()
+            if f == hoy:
+                return True
+        except:
+            continue
+
+    return False
+
+# ========================
 # IMAGEN
 # ========================
 def ajustar_fuente_responsive(texto, font_path, max_width, max_font_size):
@@ -123,7 +154,6 @@ def generar_publicacion(nombre_loteria, numeros, hora, plantilla_path, salida_pa
     img = Image.open(plantilla_path).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
-    # Fuentes Linux (GitHub Actions) y fallback PIL
     posibles_fuentes = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "C:/Windows/Fonts/arialbd.ttf",
@@ -168,14 +198,14 @@ def generar_publicacion(nombre_loteria, numeros, hora, plantilla_path, salida_pa
 # DATA
 # ========================
 def obtener_resultados_de_hoy(api_url) -> List[Tuple[str, list, Optional[str], Optional[str]]]:
-    hoy = datetime.now().strftime("%Y-%m-%d")
     data = requests.get(api_url, timeout=30).json()
     out = []
 
     for resultado in data.get("resultados", []):
         nombre = resultado.get("loteria", "")
         fecha = resultado.get("fecha", "")
-        if nombre in LOTERIAS_A_PUBLICAR and fecha == hoy:
+
+        if nombre in LOTERIAS_A_PUBLICAR and fecha_es_hoy(fecha):
             numeros = resultado.get("numeros", [])
             hora_legible = obtener_hora_legible(resultado)
             hora_scrapeo = resultado.get("hora_scrapeo")
@@ -209,16 +239,13 @@ if __name__ == "__main__":
 
     for nombre, numeros, hora, _ in resultados:
 
-        # Nombre archivo imagen y archivo marcador
         nombre_archivo = f"post_{nombre.replace(' ', '_')}.png"
         archivo_publicado = nombre_archivo + ".published"
 
-        # Si ya está publicado → saltar
         if os.path.exists(archivo_publicado):
             print(f"⏭ Ya publicado previamente: {nombre_archivo}")
             continue
 
-        # Generar imagen
         generar_publicacion(
             nombre_loteria=nombre,
             numeros=numeros,
@@ -227,7 +254,6 @@ if __name__ == "__main__":
             salida_path=nombre_archivo
         )
 
-        # Caption
         if numeros:
             preview = " - ".join(numeros[:3]) if len(numeros) >= 3 else " - ".join(numeros)
         else:
@@ -246,12 +272,10 @@ if __name__ == "__main__":
             "#BancaRD #ResultadosRD #LoteriasRD #Quinielas #Leidsa #Loteka #LoteriaNacional"
         )
 
-        # Publicar en IG
         try:
             permalink = ig_publish_image_file(nombre_archivo, caption)
             print("📣 Publicado en IG:", permalink)
 
-            # Crear marcador .published
             with open(archivo_publicado, "w") as f:
                 f.write("published")
 
