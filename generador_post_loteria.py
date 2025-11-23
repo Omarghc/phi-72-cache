@@ -23,23 +23,20 @@ GRAPH = "https://graph.facebook.com/v24.0"
 IG_USER_ID = os.getenv("IG_USER_ID")
 IG_TOKEN = os.getenv("IG_TOKEN")
 
-
 # ========================
 # EXCEPCIÓN
 # ========================
 class IGError(Exception):
     pass
 
-
 # ========================
-# IG DIRECT UPLOAD (FINAL)
+# IG DIRECT UPLOAD
 # ========================
 def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] = None) -> str:
     uid = user_id or IG_USER_ID
     if not uid or not IG_TOKEN:
         raise IGError("Faltan IG_USER_ID o IG_TOKEN")
 
-    # 1) Crear contenedor
     url_media = f"{GRAPH}/{uid}/media"
 
     with open(local_path, "rb") as f:
@@ -59,7 +56,6 @@ def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] 
     if not creation_id:
         raise IGError(f"Sin creation_id: {r.text}")
 
-    # 2) Publicar el contenedor
     url_publish = f"{GRAPH}/{uid}/media_publish"
     r2 = requests.post(url_publish, data={"creation_id": creation_id, "access_token": IG_TOKEN}, timeout=60)
 
@@ -72,7 +68,6 @@ def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] 
     if not media_id:
         raise IGError("No se recibió media_id en la publicación")
 
-    # 3) Obtener permalink
     info = requests.get(
         f"{GRAPH}/{media_id}",
         params={"fields": "permalink", "access_token": IG_TOKEN},
@@ -81,20 +76,23 @@ def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] 
 
     return info.get("permalink", "")
 
-
 # ========================
 # IMAGEN
 # ========================
 def ajustar_fuente_responsive(texto, font_path, max_width, max_font_size):
     font_size = max_font_size
     while font_size > 10:
-        font = ImageFont.truetype(font_path, font_size)
+        try:
+            font = ImageFont.truetype(font_path, font_size)
+        except:
+            return ImageFont.load_default()
+
         bbox = font.getbbox(texto)
         if (bbox[2] - bbox[0]) <= max_width:
             return font
         font_size -= 1
-    return ImageFont.truetype(font_path, 10)
 
+    return ImageFont.load_default()
 
 def formatear_hora(hora_str):
     formatos = ["%I:%M %p", "%I:%M%p", "%H:%M"]
@@ -105,7 +103,6 @@ def formatear_hora(hora_str):
         except:
             continue
     return None
-
 
 def obtener_hora_legible(resultado):
     if resultado.get("hora"):
@@ -122,16 +119,33 @@ def obtener_hora_legible(resultado):
             return None
     return None
 
-
 def generar_publicacion(nombre_loteria, numeros, hora, plantilla_path, salida_path):
     img = Image.open(plantilla_path).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    font_numeros = ImageFont.truetype(font_path, 160)
-    font_hora = ImageFont.truetype(font_path, 70)
+    # Fuentes Linux (GitHub Actions) y fallback PIL
+    posibles_fuentes = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/ARIALBD.TTF",
+    ]
 
-    font_loteria = ajustar_fuente_responsive(nombre_loteria.upper(), font_path, 900, 90)
+    font_path = None
+    for f in posibles_fuentes:
+        if os.path.exists(f):
+            font_path = f
+            break
+
+    if not font_path:
+        print("⚠️ No se encontró fuente del sistema, usando default.")
+        font_numeros = ImageFont.load_default()
+        font_hora = ImageFont.load_default()
+        font_loteria = ImageFont.load_default()
+    else:
+        font_numeros = ImageFont.truetype(font_path, 160)
+        font_hora = ImageFont.truetype(font_path, 70)
+        font_loteria = ajustar_fuente_responsive(nombre_loteria.upper(), font_path, 900, 90)
+
     bbox_loteria = draw.textbbox((0, 0), nombre_loteria.upper(), font=font_loteria)
     x_loteria = (1080 - (bbox_loteria[2] - bbox_loteria[0])) // 2
     draw.text((x_loteria, 670), nombre_loteria.upper(), font=font_loteria, fill=(255, 204, 0))
@@ -149,7 +163,6 @@ def generar_publicacion(nombre_loteria, numeros, hora, plantilla_path, salida_pa
 
     img.save(salida_path)
     print(f"✅ Imagen guardada: {salida_path}")
-
 
 # ========================
 # DATA
@@ -179,7 +192,6 @@ def obtener_resultados_de_hoy(api_url) -> List[Tuple[str, list, Optional[str], O
 
     return sorted(out, key=ordenar)
 
-
 # ========================
 # MAIN
 # ========================
@@ -197,8 +209,16 @@ if __name__ == "__main__":
 
     for nombre, numeros, hora, _ in resultados:
 
-        # 1) Generar imagen
+        # Nombre archivo imagen y archivo marcador
         nombre_archivo = f"post_{nombre.replace(' ', '_')}.png"
+        archivo_publicado = nombre_archivo + ".published"
+
+        # Si ya está publicado → saltar
+        if os.path.exists(archivo_publicado):
+            print(f"⏭ Ya publicado previamente: {nombre_archivo}")
+            continue
+
+        # Generar imagen
         generar_publicacion(
             nombre_loteria=nombre,
             numeros=numeros,
@@ -207,7 +227,7 @@ if __name__ == "__main__":
             salida_path=nombre_archivo
         )
 
-        # 2) Caption
+        # Caption
         if numeros:
             preview = " - ".join(numeros[:3]) if len(numeros) >= 3 else " - ".join(numeros)
         else:
@@ -226,9 +246,16 @@ if __name__ == "__main__":
             "#BancaRD #ResultadosRD #LoteriasRD #Quinielas #Leidsa #Loteka #LoteriaNacional"
         )
 
-        # 3) Publicar en Instagram
+        # Publicar en IG
         try:
             permalink = ig_publish_image_file(nombre_archivo, caption)
             print("📣 Publicado en IG:", permalink)
+
+            # Crear marcador .published
+            with open(archivo_publicado, "w") as f:
+                f.write("published")
+
+            print(f"📝 Marcado como publicado: {archivo_publicado}")
+
         except Exception as e:
             print("❌ Error publicando en IG:", e)
