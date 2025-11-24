@@ -201,15 +201,28 @@ def obtener_resultados_de_hoy(api_url) -> List[Tuple[str, list, Optional[str], O
     data = requests.get(api_url, timeout=30).json()
     out = []
 
+    total = 0
+    total_match_nombre = 0
+    total_match_fecha = 0
+
     for resultado in data.get("resultados", []):
+        total += 1
         nombre = resultado.get("loteria", "")
         fecha = resultado.get("fecha", "")
 
+        if nombre in LOTERIAS_A_PUBLICAR:
+            total_match_nombre += 1
+
         if nombre in LOTERIAS_A_PUBLICAR and fecha_es_hoy(fecha):
+            total_match_fecha += 1
             numeros = resultado.get("numeros", [])
             hora_legible = obtener_hora_legible(resultado)
             hora_scrapeo = resultado.get("hora_scrapeo")
             out.append((nombre, numeros, hora_legible, hora_scrapeo))
+
+    print(f"🔎 Total resultados en JSON: {total}")
+    print(f"✅ Coinciden por nombre (LOTERIAS_A_PUBLICAR): {total_match_nombre}")
+    print(f"📅 Coinciden nombre+fecha HOY: {total_match_fecha}")
 
     def ordenar(e):
         _, _, _, h = e
