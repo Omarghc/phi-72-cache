@@ -249,11 +249,21 @@ if __name__ == "__main__":
         exit()
 
     fecha_humana = datetime.now().strftime("%d/%m/%Y")
+    fecha_slug = datetime.now().strftime("%Y-%m-%d")
 
     for nombre, numeros, hora, _ in resultados:
+        # slug del nombre para archivo (sin espacios ni caracteres raros)
+        slug_nombre = (
+            nombre.replace(" ", "_")
+                  .replace(":", "")
+                  .replace("/", "_")
+                  .replace("__", "_")
+        )
 
-        nombre_archivo = f"post_{nombre.replace(' ', '_')}.png"
+        nombre_archivo = f"post_{fecha_slug}_{slug_nombre}.png"
         archivo_publicado = nombre_archivo + ".published"
+
+        print(f"🧩 Procesando: {nombre} | archivo: {nombre_archivo}")
 
         if os.path.exists(archivo_publicado):
             print(f"⏭ Ya publicado previamente: {nombre_archivo}")
