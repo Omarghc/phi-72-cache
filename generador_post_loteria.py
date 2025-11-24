@@ -76,38 +76,6 @@ def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] 
     return info.get("permalink", "")
 
 # ========================
-# FECHA INTELIGENTE
-# ========================
-def fecha_es_hoy(fecha_str: str) -> bool:
-    """
-    Detecta si una fecha en formato variable corresponde a HOY.
-    Soporta formatos usados por tu API.
-    """
-    if not fecha_str:
-        return False
-
-    hoy = datetime.now().date()
-
-    formatos = [
-        "%Y-%m-%d",
-        "%d-%m-%Y",
-        "%d-%m-%Y %H:%M",
-        "%d/%m/%Y",
-        "%d %B",        # "23 noviembre"
-        "%d %b",        # "23 nov"
-    ]
-
-    for fmt in formatos:
-        try:
-            f = datetime.strptime(fecha_str, fmt).date()
-            if f == hoy:
-                return True
-        except:
-            continue
-
-    return False
-
-# ========================
 # IMAGEN
 # ========================
 def ajustar_fuente_responsive(texto, font_path, max_width, max_font_size):
@@ -195,37 +163,57 @@ def generar_publicacion(nombre_loteria, numeros, hora, plantilla_path, salida_pa
     print(f"✅ Imagen guardada: {salida_path}")
 
 # ========================
-# DATA
+# DATA: ÚLTIMO RESULTADO POR LOTERÍA
 # ========================
-def obtener_resultados_de_hoy(api_url) -> List[Tuple[str, list, Optional[str], Optional[str]]]:
+def obtener_resultados_para_publicar(api_url) -> List[Tuple[str, list, Optional[str], Optional[str], Optional[str]]]:
+    """
+    Devuelve lista de tuplas:
+    (nombre_loteria, numeros, hora_legible, hora_scrapeo, fecha_str)
+    usando SIEMPRE el resultado más reciente por lotería,
+    SIN filtrar por fecha (para asegurarnos que publique algo).
+    """
     data = requests.get(api_url, timeout=30).json()
-    out = []
 
+    latest: Dict[str, Tuple[list, Optional[str], Optional[str], Optional[str]]] = {}
     total = 0
     total_match_nombre = 0
-    total_match_fecha = 0
 
     for resultado in data.get("resultados", []):
         total += 1
         nombre = resultado.get("loteria", "")
-        fecha = resultado.get("fecha", "")
+        if nombre not in LOTERIAS_A_PUBLICAR:
+            continue
 
-        if nombre in LOTERIAS_A_PUBLICAR:
-            total_match_nombre += 1
+        total_match_nombre += 1
+        numeros = resultado.get("numeros", [])
+        hora_legible = obtener_hora_legible(resultado)
+        hora_scrapeo = resultado.get("hora_scrapeo")
+        fecha = resultado.get("fecha")
 
-        if nombre in LOTERIAS_A_PUBLICAR and fecha_es_hoy(fecha):
-            total_match_fecha += 1
-            numeros = resultado.get("numeros", [])
-            hora_legible = obtener_hora_legible(resultado)
-            hora_scrapeo = resultado.get("hora_scrapeo")
-            out.append((nombre, numeros, hora_legible, hora_scrapeo))
+        # Parse hora_scrapeo para determinar el más reciente
+        try:
+            ts = datetime.strptime(hora_scrapeo, "%Y-%m-%d %H:%M:%S") if hora_scrapeo else datetime.min
+        except:
+            ts = datetime.min
+
+        if nombre not in latest:
+            latest[nombre] = (numeros, hora_legible, hora_scrapeo, fecha, ts)
+        else:
+            _, _, _, _, ts_prev = latest[nombre]
+            if ts > ts_prev:
+                latest[nombre] = (numeros, hora_legible, hora_scrapeo, fecha, ts)
 
     print(f"🔎 Total resultados en JSON: {total}")
     print(f"✅ Coinciden por nombre (LOTERIAS_A_PUBLICAR): {total_match_nombre}")
-    print(f"📅 Coinciden nombre+fecha HOY: {total_match_fecha}")
+    print(f"🎯 Loterías con resultado seleccionado: {len(latest)}")
+
+    # Convertir dict a lista ordenada por hora_scrapeo
+    items: List[Tuple[str, list, Optional[str], Optional[str], Optional[str]]] = []
+    for nombre, (numeros, hora_legible, hora_scrapeo, fecha, ts) in latest.items():
+        items.append((nombre, numeros, hora_legible, hora_scrapeo, fecha))
 
     def ordenar(e):
-        _, _, _, h = e
+        _, _, _, h, _ = e
         if not h:
             return datetime.min
         try:
@@ -233,7 +221,7 @@ def obtener_resultados_de_hoy(api_url) -> List[Tuple[str, list, Optional[str], O
         except:
             return datetime.min
 
-    return sorted(out, key=ordenar)
+    return sorted(items, key=ordenar)
 
 # ========================
 # MAIN
@@ -242,17 +230,21 @@ if __name__ == "__main__":
     api_url = "https://omarghc.github.io/sync-phi72/resultados_combinados.json"
     plantilla = "plantilla_bancard.png"
 
-    resultados = obtener_resultados_de_hoy(api_url)
+    resultados = obtener_resultados_para_publicar(api_url)
 
     if not resultados:
-        print("⚠️ No hay resultados hoy.")
+        print("⚠️ No hay resultados para publicar (ninguna lotería de la lista).")
         exit()
 
-    fecha_humana = datetime.now().strftime("%d/%m/%Y")
-    fecha_slug = datetime.now().strftime("%Y-%m-%d")
+    for nombre, numeros, hora, hora_scrapeo, fecha_str in resultados:
+        # Si la fecha del JSON viene bien, la usamos. Si no, hoy.
+        fecha_slug = fecha_str if fecha_str else datetime.now().strftime("%Y-%m-%d")
+        fecha_humana = None
+        try:
+            fecha_humana = datetime.strptime(fecha_slug, "%Y-%m-%d").strftime("%d/%m/%Y")
+        except:
+            fecha_humana = datetime.now().strftime("%d/%m/%Y")
 
-    for nombre, numeros, hora, _ in resultados:
-        # slug del nombre para archivo (sin espacios ni caracteres raros)
         slug_nombre = (
             nombre.replace(" ", "_")
                   .replace(":", "")
@@ -285,7 +277,7 @@ if __name__ == "__main__":
         hora_texto = hora or "hora no disponible"
 
         caption = (
-            f"🎯 {nombre} — resultado de hoy {fecha_humana}\n"
+            f"🎯 {nombre} — resultado de la fecha {fecha_humana}\n"
             f"🧮 Números: {preview} … (completo en la app)\n"
             f"⏰ Sorteo de las {hora_texto}\n\n"
             "📲 Descarga la app BancaRD y:\n"
