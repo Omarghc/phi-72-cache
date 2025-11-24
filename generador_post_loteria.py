@@ -22,6 +22,12 @@ GRAPH = "https://graph.facebook.com/v24.0"
 IG_USER_ID = os.getenv("IG_USER_ID")
 IG_TOKEN = os.getenv("IG_TOKEN")
 
+# GitHub para alojar la imagen y obtener image_url
+GH_TOKEN = os.getenv("GH_TOKEN")  # token personal con scope repo
+GH_REPO = os.getenv("GH_REPO", "omarghc/insta-assets")  # owner/repo
+GH_BRANCH = os.getenv("GH_BRANCH", "main")
+GH_BASE_RAW = f"https://raw.githubusercontent.com/{GH_REPO}/{GH_BRANCH}"
+
 # ========================
 # EXCEPCIÓN
 # ========================
@@ -47,24 +53,53 @@ def ig_get_account_info(user_id: Optional[str] = None) -> Dict:
     return r.json()
 
 # ========================
-# IG DIRECT UPLOAD
+# GITHUB: SUBIR ARCHIVO Y OBTENER URL PÚBLICA
 # ========================
-def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] = None) -> str:
+def github_put_file(local_path: str, dest_path: str) -> str:
+    """
+    Sube un archivo a GH (Contents API) y devuelve la RAW URL pública.
+    """
+    if not GH_TOKEN:
+        raise RuntimeError("Falta GH_TOKEN en variables de entorno.")
+
+    with open(local_path, "rb") as f:
+        content_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    api = f"https://api.github.com/repos/{GH_REPO}/contents/{dest_path.lstrip('/')}"
+    payload = {
+        "message": f"post: {os.path.basename(dest_path)}",
+        "content": content_b64,
+        "branch": GH_BRANCH,
+    }
+    headers = {
+        "Authorization": f"Bearer {GH_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+    r = requests.put(api, headers=headers, data=json.dumps(payload), timeout=30)
+    print("GitHub PUT:", r.status_code, r.text)
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"GitHub {r.status_code}: {r.text}")
+
+    # RAW URL (con anti-caché)
+    bust = int(time.time())
+    return f"{GH_BASE_RAW}/{dest_path}?t={bust}"
+
+# ========================
+# IG: PUBLICAR POR image_url
+# ========================
+def ig_publish_image_url(image_url: str, caption: str, user_id: Optional[str] = None) -> str:
     uid = user_id or IG_USER_ID
     if not uid or not IG_TOKEN:
         raise IGError("Faltan IG_USER_ID o IG_TOKEN")
 
-    # 1) Crear contenedor
+    # 1) crear contenedor
     url_media = f"{GRAPH}/{uid}/media"
-
-    with open(local_path, "rb") as f:
-        files = {"image_file": f}
-        data = {
-            "caption": caption,
-            "access_token": IG_TOKEN,
-        }
-        r = requests.post(url_media, files=files, data=data, timeout=60)
-
+    data = {
+        "image_url": image_url,
+        "caption": caption,
+        "access_token": IG_TOKEN,
+    }
+    r = requests.post(url_media, data=data, timeout=60)
     print("IG /media:", r.status_code, r.text)
 
     if r.status_code not in (200, 201):
@@ -74,14 +109,13 @@ def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] 
     if not creation_id:
         raise IGError(f"Sin creation_id: {r.text}")
 
-    # 2) Publicar el contenedor
+    # 2) publicar el contenedor
     url_publish = f"{GRAPH}/{uid}/media_publish"
     r2 = requests.post(
         url_publish,
         data={"creation_id": creation_id, "access_token": IG_TOKEN},
         timeout=60,
     )
-
     print("IG /media_publish:", r2.status_code, r2.text)
 
     if r2.status_code not in (200, 201):
@@ -91,7 +125,6 @@ def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] 
     if not media_id:
         raise IGError("No se recibió media_id en la publicación")
 
-    # 3) Obtener permalink
     info = requests.get(
         f"{GRAPH}/{media_id}",
         params={"fields": "permalink,media_type,caption,timestamp", "access_token": IG_TOKEN},
@@ -99,12 +132,14 @@ def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] 
     ).json()
 
     print("IG /media_info:", info)
-
     return info.get("permalink", "")
 
 # ========================
 # IMAGEN
 # ========================
+from base64 import b64encode as _  # evitar error si borras import por accidente
+import base64  # import real
+
 def ajustar_fuente_responsive(texto, font_path, max_width, max_font_size):
     font_size = max_font_size
     while font_size > 10:
@@ -293,6 +328,7 @@ if __name__ == "__main__":
             print(f"⏭ Ya publicado previamente: {nombre_archivo}")
             continue
 
+        # 1) Generar imagen local
         generar_publicacion(
             nombre_loteria=nombre,
             numeros=numeros,
@@ -301,6 +337,16 @@ if __name__ == "__main__":
             salida_path=nombre_archivo
         )
 
+        # 2) Subir a GitHub para obtener image_url
+        gh_dest = f"posts/{fecha_slug}/{nombre_archivo}"
+        try:
+            public_url = github_put_file(nombre_archivo, gh_dest)
+            print("🔗 URL pública:", public_url)
+        except Exception as e:
+            print("❌ Error subiendo a GitHub:", e)
+            continue
+
+        # 3) Caption
         if numeros:
             preview = " - ".join(numeros[:3]) if len(numeros) >= 3 else " - ".join(numeros)
         else:
@@ -319,8 +365,9 @@ if __name__ == "__main__":
             "#BancaRD #ResultadosRD #LoteriasRD #Quinielas #Leidsa #Loteka #LoteriaNacional"
         )
 
+        # 4) Publicar en IG con image_url
         try:
-            permalink = ig_publish_image_file(nombre_archivo, caption)
+            permalink = ig_publish_image_url(public_url, caption)
             print("📣 Publicado en IG:", permalink)
 
             with open(archivo_publicado, "w") as f:
