@@ -29,6 +29,24 @@ class IGError(Exception):
     pass
 
 # ========================
+# IG DEBUG ACCOUNT
+# ========================
+def ig_get_account_info(user_id: Optional[str] = None) -> Dict:
+    uid = user_id or IG_USER_ID
+    if not uid or not IG_TOKEN:
+        raise IGError("Faltan IG_USER_ID o IG_TOKEN para debug de cuenta.")
+    url = f"{GRAPH}/{uid}"
+    params = {
+        "fields": "id,username,profile_picture_url,name",
+        "access_token": IG_TOKEN,
+    }
+    r = requests.get(url, params=params, timeout=30)
+    print("IG /account_info:", r.status_code, r.text)
+    if r.status_code not in (200, 201):
+        raise IGError(f"Error obteniendo info de cuenta: {r.status_code} {r.text}")
+    return r.json()
+
+# ========================
 # IG DIRECT UPLOAD
 # ========================
 def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] = None) -> str:
@@ -36,6 +54,7 @@ def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] 
     if not uid or not IG_TOKEN:
         raise IGError("Faltan IG_USER_ID o IG_TOKEN")
 
+    # 1) Crear contenedor
     url_media = f"{GRAPH}/{uid}/media"
 
     with open(local_path, "rb") as f:
@@ -55,8 +74,13 @@ def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] 
     if not creation_id:
         raise IGError(f"Sin creation_id: {r.text}")
 
+    # 2) Publicar el contenedor
     url_publish = f"{GRAPH}/{uid}/media_publish"
-    r2 = requests.post(url_publish, data={"creation_id": creation_id, "access_token": IG_TOKEN}, timeout=60)
+    r2 = requests.post(
+        url_publish,
+        data={"creation_id": creation_id, "access_token": IG_TOKEN},
+        timeout=60,
+    )
 
     print("IG /media_publish:", r2.status_code, r2.text)
 
@@ -67,11 +91,14 @@ def ig_publish_image_file(local_path: str, caption: str, user_id: Optional[str] 
     if not media_id:
         raise IGError("No se recibió media_id en la publicación")
 
+    # 3) Obtener permalink
     info = requests.get(
         f"{GRAPH}/{media_id}",
-        params={"fields": "permalink", "access_token": IG_TOKEN},
+        params={"fields": "permalink,media_type,caption,timestamp", "access_token": IG_TOKEN},
         timeout=30,
     ).json()
+
+    print("IG /media_info:", info)
 
     return info.get("permalink", "")
 
@@ -174,7 +201,7 @@ def obtener_resultados_para_publicar(api_url) -> List[Tuple[str, list, Optional[
     """
     data = requests.get(api_url, timeout=30).json()
 
-    latest: Dict[str, Tuple[list, Optional[str], Optional[str], Optional[str]]] = {}
+    latest: Dict[str, Tuple[list, Optional[str], Optional[str], Optional[str], datetime]] = {}
     total = 0
     total_match_nombre = 0
 
@@ -190,7 +217,6 @@ def obtener_resultados_para_publicar(api_url) -> List[Tuple[str, list, Optional[
         hora_scrapeo = resultado.get("hora_scrapeo")
         fecha = resultado.get("fecha")
 
-        # Parse hora_scrapeo para determinar el más reciente
         try:
             ts = datetime.strptime(hora_scrapeo, "%Y-%m-%d %H:%M:%S") if hora_scrapeo else datetime.min
         except:
@@ -207,7 +233,6 @@ def obtener_resultados_para_publicar(api_url) -> List[Tuple[str, list, Optional[
     print(f"✅ Coinciden por nombre (LOTERIAS_A_PUBLICAR): {total_match_nombre}")
     print(f"🎯 Loterías con resultado seleccionado: {len(latest)}")
 
-    # Convertir dict a lista ordenada por hora_scrapeo
     items: List[Tuple[str, list, Optional[str], Optional[str], Optional[str]]] = []
     for nombre, (numeros, hora_legible, hora_scrapeo, fecha, ts) in latest.items():
         items.append((nombre, numeros, hora_legible, hora_scrapeo, fecha))
@@ -230,6 +255,15 @@ if __name__ == "__main__":
     api_url = "https://omarghc.github.io/sync-phi72/resultados_combinados.json"
     plantilla = "plantilla_bancard.png"
 
+    # Debug: ver a qué cuenta estamos posteando
+    try:
+        info = ig_get_account_info()
+        username = info.get("username", "?")
+        name = info.get("name", "")
+        print(f"📛 Publicando en la cuenta IG: @{username} ({name})")
+    except Exception as e:
+        print("⚠️ No se pudo obtener info de la cuenta IG:", e)
+
     resultados = obtener_resultados_para_publicar(api_url)
 
     if not resultados:
@@ -237,9 +271,7 @@ if __name__ == "__main__":
         exit()
 
     for nombre, numeros, hora, hora_scrapeo, fecha_str in resultados:
-        # Si la fecha del JSON viene bien, la usamos. Si no, hoy.
         fecha_slug = fecha_str if fecha_str else datetime.now().strftime("%Y-%m-%d")
-        fecha_humana = None
         try:
             fecha_humana = datetime.strptime(fecha_slug, "%Y-%m-%d").strftime("%d/%m/%Y")
         except:
