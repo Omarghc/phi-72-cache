@@ -16,10 +16,10 @@ jobs:
     env:
       IG_USER_ID: ${{ secrets.IG_USER_ID }}
       IG_TOKEN: ${{ secrets.IG_TOKEN }}
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}               # token personal para repo de assets
-      GH_REPO: "omarghc/insta-assets"                # repo donde se suben las imágenes
-      GH_BRANCH: "main"                              # rama de ese repo
-
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # 👈 usamos el token automático
+      GH_REPO: "omarghc/insta-assets"        # o TU_REPO de assets
+      GH_BRANCH: "main"
+      
     steps:
       - name: Clonar repositorio
         uses: actions/checkout@v4
