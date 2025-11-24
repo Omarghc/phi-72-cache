@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # necesario para poder hacer git push
+  contents: write  # necesario para poder hacer git push en ESTE repo
 
 jobs:
   generar-imagenes:
@@ -16,6 +16,9 @@ jobs:
     env:
       IG_USER_ID: ${{ secrets.IG_USER_ID }}
       IG_TOKEN: ${{ secrets.IG_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}               # token personal para repo de assets
+      GH_REPO: "omarghc/insta-assets"                # repo donde se suben las imágenes
+      GH_BRANCH: "main"                              # rama de ese repo
 
     steps:
       - name: Clonar repositorio
