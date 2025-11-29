@@ -8,6 +8,16 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 
 # ========================
+# VIDEO / REEL (moviepy)
+# ========================
+try:
+    from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip
+except ImportError:
+    ImageClip = None
+    concatenate_videoclips = None
+    AudioFileClip = None
+
+# ========================
 # CONFIG
 # ========================
 LOTERIAS_A_PUBLICAR = [
@@ -22,11 +32,16 @@ GRAPH = "https://graph.facebook.com/v24.0"
 IG_USER_ID = os.getenv("IG_USER_ID")
 IG_TOKEN = os.getenv("IG_TOKEN")
 
-# GitHub para alojar la imagen y obtener image_url
+# GitHub para alojar la imagen / video y obtener URL pública
 GH_TOKEN = os.getenv("GH_TOKEN")  # token personal con scope repo
 GH_REPO = os.getenv("GH_REPO", "omarghc/insta-assets")  # owner/repo
 GH_BRANCH = os.getenv("GH_BRANCH", "main")
 GH_BASE_RAW = f"https://raw.githubusercontent.com/{GH_REPO}/{GH_BRANCH}"
+
+# Audio para el reel (debe existir en el repo / entorno donde corre el script)
+AUDIO_REEL_PATH = os.getenv("AUDIO_REEL_PATH", "bancard_theme.mp3")
+DURACION_IMAGEN_REEL = float(os.getenv("REEL_IMAGE_DURATION", "2.5"))  # segundos
+FPS_REEL = int(os.getenv("REEL_FPS", "30"))
 
 # ========================
 # EXCEPCIÓN
@@ -55,12 +70,19 @@ def ig_get_account_info(user_id: Optional[str] = None) -> Dict:
 # ========================
 # GITHUB: SUBIR ARCHIVO Y OBTENER URL PÚBLICA
 # ========================
+from base64 import b64encode as _  # evitar error si borras import por accidente
+import base64  # import real
+
 def github_put_file(local_path: str, dest_path: str) -> str:
     """
     Sube un archivo a GH (Contents API) y devuelve la RAW URL pública.
+    Sirve tanto para PNG como para MP4.
     """
     if not GH_TOKEN:
         raise RuntimeError("Falta GH_TOKEN en variables de entorno.")
+
+    if not os.path.exists(local_path):
+        raise RuntimeError(f"No existe el archivo local a subir: {local_path}")
 
     with open(local_path, "rb") as f:
         content_b64 = base64.b64encode(f.read()).decode("utf-8")
@@ -75,7 +97,7 @@ def github_put_file(local_path: str, dest_path: str) -> str:
         "Authorization": f"Bearer {GH_TOKEN}",
         "Accept": "application/vnd.github+json",
     }
-    r = requests.put(api, headers=headers, data=json.dumps(payload), timeout=30)
+    r = requests.put(api, headers=headers, data=json.dumps(payload), timeout=60)
     print("GitHub PUT:", r.status_code, r.text)
     if r.status_code not in (200, 201):
         raise RuntimeError(f"GitHub {r.status_code}: {r.text}")
@@ -100,7 +122,7 @@ def ig_publish_image_url(image_url: str, caption: str, user_id: Optional[str] = 
         "access_token": IG_TOKEN,
     }
     r = requests.post(url_media, data=data, timeout=60)
-    print("IG /media:", r.status_code, r.text)
+    print("IG /media (IMAGE):", r.status_code, r.text)
 
     if r.status_code not in (200, 201):
         raise IGError(f"Error creando media: {r.status_code} {r.text}")
@@ -116,7 +138,7 @@ def ig_publish_image_url(image_url: str, caption: str, user_id: Optional[str] = 
         data={"creation_id": creation_id, "access_token": IG_TOKEN},
         timeout=60,
     )
-    print("IG /media_publish:", r2.status_code, r2.text)
+    print("IG /media_publish (IMAGE):", r2.status_code, r2.text)
 
     if r2.status_code not in (200, 201):
         raise IGError(f"Error publicando media: {r2.status_code} {r2.text}")
@@ -131,15 +153,69 @@ def ig_publish_image_url(image_url: str, caption: str, user_id: Optional[str] = 
         timeout=30,
     ).json()
 
-    print("IG /media_info:", info)
+    print("IG /media_info (IMAGE):", info)
+    return info.get("permalink", "")
+
+# ========================
+# IG: PUBLICAR VIDEO (REEL) POR video_url
+# ========================
+def ig_publish_video_url(video_url: str, caption: str, user_id: Optional[str] = None) -> str:
+    """
+    Crea y publica un VIDEO usando video_url.
+    Si el video es vertical y corto, IG lo trata como Reel.
+    """
+    uid = user_id or IG_USER_ID
+    if not uid or not IG_TOKEN:
+        raise IGError("Faltan IG_USER_ID o IG_TOKEN para publicar video.")
+
+    url_media = f"{GRAPH}/{uid}/media"
+    data = {
+        "media_type": "VIDEO",
+        "video_url": video_url,
+        "caption": caption,
+        "access_token": IG_TOKEN,
+    }
+    r = requests.post(url_media, data=data, timeout=300)
+    print("IG /media (VIDEO):", r.status_code, r.text)
+
+    if r.status_code not in (200, 201):
+        raise IGError(f"Error creando media VIDEO: {r.status_code} {r.text}")
+
+    creation_id = r.json().get("id")
+    if not creation_id:
+        raise IGError(f"Sin creation_id para VIDEO: {r.text}")
+
+    # Darle un tiempito a IG para procesar el video
+    print("⌛ Esperando 20s para procesar el video en IG…")
+    time.sleep(20)
+
+    url_publish = f"{GRAPH}/{uid}/media_publish"
+    r2 = requests.post(
+        url_publish,
+        data={"creation_id": creation_id, "access_token": IG_TOKEN},
+        timeout=120,
+    )
+    print("IG /media_publish (VIDEO):", r2.status_code, r2.text)
+
+    if r2.status_code not in (200, 201):
+        raise IGError(f"Error publicando VIDEO: {r2.status_code} {r2.text}")
+
+    media_id = r2.json().get("id")
+    if not media_id:
+        raise IGError("No se recibió media_id en la publicación de VIDEO")
+
+    info = requests.get(
+        f"{GRAPH}/{media_id}",
+        params={"fields": "permalink,media_type,caption,timestamp", "access_token": IG_TOKEN},
+        timeout=60,
+    ).json()
+
+    print("IG /media_info (VIDEO):", info)
     return info.get("permalink", "")
 
 # ========================
 # IMAGEN
 # ========================
-from base64 import b64encode as _  # evitar error si borras import por accidente
-import base64  # import real
-
 def ajustar_fuente_responsive(texto, font_path, max_width, max_font_size):
     font_size = max_font_size
     while font_size > 10:
@@ -225,6 +301,72 @@ def generar_publicacion(nombre_loteria, numeros, hora, plantilla_path, salida_pa
     print(f"✅ Imagen guardada: {salida_path}")
 
 # ========================
+# VIDEO: CREAR REEL DESDE IMÁGENES
+# ========================
+def crear_reel_desde_imagenes(imagenes: List[str], salida_video: str, audio_path: Optional[str] = None) -> Optional[str]:
+    """
+    Recibe una lista de rutas de imágenes (PNG), crea un video 1080x1920 (reel)
+    mostrándolas secuencialmente y opcionalmente le agrega audio.
+    """
+    if not imagenes:
+        print("🎬 No hay imágenes para crear el reel.")
+        return None
+
+    if ImageClip is None or concatenate_videoclips is None:
+        print("❌ moviepy no está instalado. No se generará el reel.")
+        return None
+
+    clips = []
+    for img_path in imagenes:
+        if not os.path.exists(img_path):
+            print(f"⚠️ Imagen no encontrada para reel: {img_path}")
+            continue
+
+        print(f"🎬 Añadiendo al reel: {img_path}")
+        clip = ImageClip(img_path)
+        w, h = clip.size
+        scale = min(1080 / w, 1920 / h)
+        clip = clip.resize(scale)
+
+        clip = clip.on_color(
+            size=(1080, 1920),
+            color=(0, 0, 0),
+            col_opacity=1
+        ).set_duration(DURACION_IMAGEN_REEL)
+
+        clips.append(clip)
+
+    if not clips:
+        print("❌ Ninguna imagen válida para el reel.")
+        return None
+
+    video = concatenate_videoclips(clips, method="compose")
+
+    # Audio
+    if audio_path and os.path.exists(audio_path) and AudioFileClip is not None:
+        print(f"🎵 Agregando audio al reel: {audio_path}")
+        audio = AudioFileClip(audio_path)
+        audio = audio.audio_loop(duration=video.duration)
+        video = video.set_audio(audio)
+        audio_enabled = True
+    else:
+        if audio_path:
+            print(f"⚠️ Audio no encontrado o moviepy sin AudioFileClip: {audio_path}")
+        audio_enabled = False
+
+    print(f"💾 Renderizando reel en {salida_video} (audio={'sí' if audio_enabled else 'no'})...")
+    video.write_videofile(
+        salida_video,
+        fps=FPS_REEL,
+        codec="libx264",
+        audio_codec="aac" if audio_enabled else None,
+        bitrate="4000k",
+        threads=4,
+    )
+    print(f"✅ Reel generado: {salida_video}")
+    return salida_video
+
+# ========================
 # DATA: ÚLTIMO RESULTADO POR LOTERÍA
 # ========================
 def obtener_resultados_para_publicar(api_url) -> List[Tuple[str, list, Optional[str], Optional[str], Optional[str]]]:
@@ -305,6 +447,9 @@ if __name__ == "__main__":
         print("⚠️ No hay resultados para publicar (ninguna lotería de la lista).")
         exit()
 
+    # Guardaremos aquí las imágenes NUEVAS generadas en esta ejecución
+    imagenes_para_reel: List[str] = []
+
     for nombre, numeros, hora, hora_scrapeo, fecha_str in resultados:
         fecha_slug = fecha_str if fecha_str else datetime.now().strftime("%Y-%m-%d")
         try:
@@ -337,13 +482,16 @@ if __name__ == "__main__":
             salida_path=nombre_archivo
         )
 
+        # La añadimos a la lista para el reel
+        imagenes_para_reel.append(nombre_archivo)
+
         # 2) Subir a GitHub para obtener image_url
         gh_dest = f"posts/{fecha_slug}/{nombre_archivo}"
         try:
             public_url = github_put_file(nombre_archivo, gh_dest)
             print("🔗 URL pública:", public_url)
         except Exception as e:
-            print("❌ Error subiendo a GitHub:", e)
+            print("❌ Error subiendo a GitHub (imagen):", e)
             continue
 
         # 3) Caption
@@ -376,4 +524,48 @@ if __name__ == "__main__":
             print(f"📝 Marcado como publicado: {archivo_publicado}")
 
         except Exception as e:
-            print("❌ Error publicando en IG:", e)
+            print("❌ Error publicando en IG (imagen):", e)
+
+    # ========================
+    # REEL AL FINAL DEL RUN
+    # ========================
+    if imagenes_para_reel:
+        print(f"🎬 Generando reel con {len(imagenes_para_reel)} imágenes nuevas…")
+        hoy_slug = datetime.now().strftime("%Y-%m-%d")
+        nombre_reel_local = f"reel_{hoy_slug}.mp4"
+
+        try:
+            reel_path = crear_reel_desde_imagenes(
+                imagenes_para_reel,
+                salida_video=nombre_reel_local,
+                audio_path=AUDIO_REEL_PATH,
+            )
+        except Exception as e:
+            print("❌ Error generando el reel:", e)
+            reel_path = None
+
+        if reel_path:
+            gh_dest_reel = f"reels/{hoy_slug}/{nombre_reel_local}"
+            try:
+                public_video_url = github_put_file(reel_path, gh_dest_reel)
+                print("🔗 URL pública del reel:", public_video_url)
+
+                reel_caption = (
+                    "📊 Resumen visual de los resultados del día con BancaRD 🎰📲\n\n"
+                    "Descarga la app y no te pierdas ningún número:\n"
+                    "• Resultados actualizados\n"
+                    "• Todas las loterías en un solo lugar\n"
+                    "• Herramientas para tus jugadas\n\n"
+                    "#BancaRD #ResultadosRD #ReelLoterias #LoteriasRD"
+                )
+
+                try:
+                    permalink_reel = ig_publish_video_url(public_video_url, reel_caption)
+                    print("📣 Reel publicado en IG:", permalink_reel)
+                except Exception as e:
+                    print("❌ Error publicando el reel en IG:", e)
+
+            except Exception as e:
+                print("❌ Error subiendo el reel a GitHub:", e)
+    else:
+        print("ℹ️ No se generaron imágenes nuevas hoy, no se creará reel.")
